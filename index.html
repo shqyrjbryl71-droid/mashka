@@ -4529,7 +4529,8 @@ const RECITER_INFO = {
 };
 
 const STORE_KEY = 'mishkat_site_data_v3';
-function hasFullQuran(verses){
+const CONTENT_SEED_VERSION = 4;
+function hasCompleteQuran(verses){
   return Array.isArray(verses) && verses.length === 114 && verses.every(v => v && v.isSurah && typeof v.title === 'string' && typeof v.text === 'string');
 }
 
@@ -4573,26 +4574,40 @@ function normalizeStoreData(parsed) {
   if (!parsed || typeof parsed !== 'object') {
     parsed = {};
   }
-  parsed.hadiths = mergeDefaultItems(parsed.hadiths, defaultHadiths);
-  if (!parsed.phrases) parsed.phrases = defaultPhrases.slice();
-  if (!parsed.duas) parsed.duas = defaultDuas.slice();
-  if (!parsed.videos) parsed.videos = defaultVideos.slice();
+  const contentCollections = ['hadiths', 'phrases', 'duas', 'videos', 'shopItems', 'challenges', 'stories', 'adhkar'];
+  const hasStoredContent = contentCollections.some(key => Array.isArray(parsed[key]));
+  const shouldSeedDefaults = parsed.contentSeedVersion !== CONTENT_SEED_VERSION && !hasStoredContent;
+  parsed.hadiths = shouldSeedDefaults
+    ? mergeDefaultItems(parsed.hadiths, defaultHadiths)
+    : (Array.isArray(parsed.hadiths) ? parsed.hadiths : []);
+  parsed.phrases = Array.isArray(parsed.phrases) ? parsed.phrases : (shouldSeedDefaults ? defaultPhrases.slice() : []);
+  parsed.duas = Array.isArray(parsed.duas) ? parsed.duas : (shouldSeedDefaults ? defaultDuas.slice() : []);
+  parsed.videos = Array.isArray(parsed.videos) ? parsed.videos : (shouldSeedDefaults ? defaultVideos.slice() : []);
   parsed.videos.forEach(v => { if (!v.reciter) v.reciter = 'محمد اللحيدان'; });
-  if (!parsed.videoLibraryMergedV3) {
+  if (shouldSeedDefaults && !parsed.videoLibraryMergedV3) {
     const existingIds = new Set(parsed.videos.map(v => v.id));
     defaultVideos.forEach(v => { if (!existingIds.has(v.id)) parsed.videos.push(v); });
     parsed.videoLibraryMergedV3 = true;
   }
-  parsed.shopItems = mergeDefaultItems(parsed.shopItems, defaultShopItems);
-  parsed.challenges = mergeDefaultItems(parsed.challenges, defaultChallenges);
-  parsed.stories = mergeDefaultItems(parsed.stories, defaultStories);
-  parsed.adhkar = mergeDefaultItems(parsed.adhkar, defaultAdhkar);
+  parsed.shopItems = shouldSeedDefaults
+    ? mergeDefaultItems(parsed.shopItems, defaultShopItems)
+    : (Array.isArray(parsed.shopItems) ? parsed.shopItems : []);
+  parsed.challenges = shouldSeedDefaults
+    ? mergeDefaultItems(parsed.challenges, defaultChallenges)
+    : (Array.isArray(parsed.challenges) ? parsed.challenges : []);
+  parsed.stories = shouldSeedDefaults
+    ? mergeDefaultItems(parsed.stories, defaultStories)
+    : (Array.isArray(parsed.stories) ? parsed.stories : []);
+  parsed.adhkar = shouldSeedDefaults
+    ? mergeDefaultItems(parsed.adhkar, defaultAdhkar)
+    : (Array.isArray(parsed.adhkar) ? parsed.adhkar : []);
+  parsed.contentSeedVersion = CONTENT_SEED_VERSION;
   if (!parsed.audioSettings) parsed.audioSettings = { ayahReciter: 'alafasy', surahReciter: 'lhdan' };
   if (!parsed.favorites) parsed.favorites = [];
   if (!parsed.khatm) parsed.khatm = [];
   if (!parsed.shop) parsed.shop = { owned: [] };
   if (!parsed.athanFile) parsed.athanFile = null;
-  if (!hasFullQuran(parsed.verses)) {
+  if (!Array.isArray(parsed.verses)) {
     const quranData = loadQuranJsonSync();
     if (quranData) parsed.verses = quranData;
   }
@@ -4638,7 +4653,8 @@ function loadStore(){
     favorites: [],
     khatm: [],
     shop: { owned: [] },
-    athanFile: null
+    athanFile: null,
+    contentSeedVersion: CONTENT_SEED_VERSION
   };
 }
 
@@ -4664,7 +4680,10 @@ async function initializeSharedStore() {
       // كما هي (تماماً السلوك الافتراضي الحالي) — بدون أي فقدان للبيانات.
       try {
         const serverVerses = await loadVersesFromServer();
-        if (hasFullQuran(serverVerses)) store.verses = serverVerses;
+        if (Array.isArray(serverVerses)) {
+          store.verses = serverVerses;
+          store.versesCustomized = true;
+        }
       } catch (e) {}
       localStorage.setItem(STORE_KEY, JSON.stringify(store));
       return;
@@ -4739,6 +4758,8 @@ async function saveStoreToServer() {
 // يُستدعى فقط عند تعديل/إضافة/حذف آية أو سورة فعلياً من لوحة الإدارة (نادر الحدوث)
 async function saveVersesToServer() {
   if (!adminSecret) return;
+  store.versesCustomized = true;
+  localStorage.setItem(STORE_KEY, JSON.stringify(store));
   syncPending++;
   setSyncBadge('saving');
   try {
@@ -4758,6 +4779,7 @@ async function saveVersesToServer() {
 }
 
 function saveStore(){
+  store.contentSeedVersion = CONTENT_SEED_VERSION;
   localStorage.setItem(STORE_KEY, JSON.stringify(store));
   saveStoreToServer();
 }
@@ -5683,7 +5705,7 @@ initializeSharedStore().then(() => {
   refreshAdminStats();
   updateSystemInfo();
   loadQuranJsonAsync().then(quranData => {
-    if (quranData && !hasFullQuran(store.verses)) {
+    if (quranData && !store.versesCustomized && !hasCompleteQuran(store.verses)) {
       store.verses = quranData;
       saveStore();
       renderVerses(document.getElementById('verseSearch').value);
@@ -9649,7 +9671,7 @@ document.getElementById('addAdhkarBtn').addEventListener('click', ()=>{
 // ============================================================
 document.getElementById('resetAllData').addEventListener('click', ()=>{
   if(confirm('⚠️ هل أنت متأكد؟ سيتم حذف كل الإضافات وإعادة كل المحتوى إلى الوضع الافتراضي.')){
-    store = { hadiths: defaultHadiths.slice(), verses: defaultVerses.slice(), phrases: defaultPhrases.slice(), duas: defaultDuas.slice(), videos: defaultVideos.slice(), shopItems: defaultShopItems.slice(), challenges: defaultChallenges.slice(), favorites: [], khatm: [], shop: { owned: [] }, athanFile: null };
+    store = { hadiths: defaultHadiths.slice(), verses: defaultVerses.slice(), phrases: defaultPhrases.slice(), duas: defaultDuas.slice(), videos: defaultVideos.slice(), shopItems: defaultShopItems.slice(), challenges: defaultChallenges.slice(), stories: defaultStories.slice(), adhkar: defaultAdhkar.slice(), audioSettings: { ayahReciter: 'alafasy', surahReciter: 'lhdan' }, favorites: [], khatm: [], shop: { owned: [] }, athanFile: null, contentSeedVersion: CONTENT_SEED_VERSION };
     cancelHadithEdit(); cancelVerseEdit(); cancelDuaEdit(); cancelVideoEdit(); cancelShopEdit(); cancelChallengeEdit();
     saveStore(); renderHadiths(); renderVerses(); renderPhraseButtons(); renderFirdaus(); renderVideos(); renderAdminLists(); refreshAdminStats(); renderFavorites(); renderKhatm(); renderShop(); renderChallenges(); updateSystemInfo();
     showToast('🔄', 'تم استعادة كل المحتوى إلى الوضع الافتراضي', '');
@@ -9713,6 +9735,8 @@ function importData(event){
         store.stories = data.stories || defaultStories.slice();
         store.adhkar = data.adhkar || defaultAdhkar.slice();
         store.audioSettings = data.audioSettings || { ayahReciter: 'alafasy', surahReciter: 'lhdan' };
+        store.contentSeedVersion = CONTENT_SEED_VERSION;
+        store.versesCustomized = true;
         store.favorites = data.favorites || [];
         store.khatm = data.khatm || [];
         store.shop = data.shop || { owned: [] };
